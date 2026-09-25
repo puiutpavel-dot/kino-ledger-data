@@ -12,6 +12,11 @@ const DRAWS_PER_ROUND = 20;
 
 /** Enough to cover the app's statistics window plus headroom for the profit ledger. */
 const COUNT = 220;
+/**
+ * Hard ceiling on both OPAP endpoints: `last/101` and `draw-id` with a wider span both
+ * answer 400. Anything deeper has to be paged.
+ */
+const PAGE = 100;
 /** Below this, treat the response as broken rather than publishing a thin snapshot. */
 const MIN_ACCEPTABLE = 20;
 
@@ -47,15 +52,34 @@ console.log(`wrote ${draws.length} draws, newest ${draws[0].id}`);
 
 async function fetchDraws() {
   // The "last" listing leads with the in-progress draw, which has no numbers yet.
-  const res = await fetch(`${UPSTREAM}/${GAME_ID}/last/${COUNT + 1}`, { headers: HEADERS });
+  const newest = await fetchPage(`${UPSTREAM}/${GAME_ID}/last/${PAGE}`);
+  if (!newest.length) throw new Error('no completed draws in the latest page');
+
+  const byID = new Map(newest.map((d) => [d.id, d]));
+  let oldest = Math.min(...byID.keys());
+
+  // `last/` tops out at 100, so reach further back by draw id, a page at a time.
+  while (byID.size < COUNT) {
+    const to = oldest - 1;
+    const from = Math.max(1, to - PAGE + 1);
+    if (to < 1) break;
+    const page = await fetchPage(`${UPSTREAM}/${GAME_ID}/draw-id/${from}/${to}?limit=${PAGE}`);
+    if (!page.length) break;
+    for (const draw of page) byID.set(draw.id, draw);
+    const pageOldest = Math.min(...page.map((d) => d.id));
+    if (pageOldest >= oldest) break;  // no progress; stop rather than loop forever
+    oldest = pageOldest;
+  }
+
+  return [...byID.values()].sort((a, b) => b.id - a.id).slice(0, COUNT);
+}
+
+async function fetchPage(url) {
+  const res = await fetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`upstream returned ${res.status}`);
   const raw = await res.json();
   const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.content) ? raw.content : []);
-  return list
-    .map(compact)
-    .filter(Boolean)
-    .sort((a, b) => b.id - a.id)
-    .slice(0, COUNT);
+  return list.map(compact).filter(Boolean);
 }
 
 /** Keeps only what the app needs, and only for genuinely completed draws. */
