@@ -26,12 +26,14 @@ jobs:
 
       - name: Commit if changed
         run: |
-          if git diff --quiet -- draws.json; then
+          git config user.name "kino-snapshot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage first: `git diff` alone ignores untracked files, so on the very first
+          # run it reports "no change" and the snapshot never gets committed.
+          git add draws.json
+          if git diff --cached --quiet; then
             echo "snapshot unchanged, nothing to commit"
             exit 0
           fi
-          git config user.name "kino-snapshot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add draws.json
           git commit -m "Update draw snapshot"
           git push
